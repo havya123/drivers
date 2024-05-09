@@ -21,6 +21,11 @@ class AppServices extends GetxController {
     await prefs.setString(key, jsonEncode(value));
   }
 
+  Future<void> removeString(String key) async {
+    prefs.remove(key);
+    return;
+  }
+
   String getString(String key) {
     final String result = prefs.getString(key) ?? "";
     return result;

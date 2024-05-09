@@ -1,9 +1,12 @@
 import 'dart:ui' as ui;
 import 'package:drivers/app/store/app_store.dart';
+import 'package:drivers/app/util/key.dart';
 import 'package:drivers/extension/snackbar.dart';
 import 'package:drivers/firebase_service/notification_service.dart';
 import 'package:drivers/model/device_token.dart';
 import 'package:drivers/model/parcel.dart';
+import 'package:drivers/model/request.dart';
+import 'package:drivers/model/request_multi.dart';
 import 'package:drivers/repository/device_token_repo.dart';
 import 'package:drivers/repository/parcel_repo.dart';
 import 'package:flutter/material.dart';
@@ -33,21 +36,38 @@ class PickupController extends GetxController {
   @override
   Future<PickupController> onInit() async {
     if (currentPosition == null) {
-      parcelDetail.value = await ParcelRepo()
-          .getParcelInfor(AppStore.to.currentRequest.value!.parcelId);
-      await initPosition();
-      await createUserMarker();
-      LatLng parcelPosition = LatLng(
-          AppStore.to.currentRequest.value!.senderAddress['lat'],
-          AppStore.to.currentRequest.value!.senderAddress['lng']);
-      addMarker(LatLng(
-          currentPosition!.value.latitude, currentPosition!.value.longitude));
-      addParcelMarker(parcelPosition);
-      await getCurrentPosition();
-      await drawPolyline();
-      // await getPlaceByAttitude(
-      //     "${currentPosition?.value.latitude},${currentPosition?.value.longitude}");
-      waiting.value = false;
+      if (AppStore.to.currentRequest.value is Request) {
+        parcelDetail.value = await ParcelRepo()
+            .getParcelInfor(AppStore.to.currentRequest.value!.parcelId);
+        await initPosition();
+        await createUserMarker();
+        LatLng parcelPosition = LatLng(
+            AppStore.to.currentRequest.value!.senderAddress['lat'],
+            AppStore.to.currentRequest.value!.senderAddress['lng']);
+        addMarker(LatLng(
+            currentPosition!.value.latitude, currentPosition!.value.longitude));
+        addParcelMarker(parcelPosition);
+        await getCurrentPosition();
+        await drawPolyline();
+        // await getPlaceByAttitude(
+        //     "${currentPosition?.value.latitude},${currentPosition?.value.longitude}");
+        waiting.value = false;
+        return this;
+      }
+      if (AppStore.to.currentRequest.value is RequestMulti) {
+        await initPosition();
+        await createUserMarker();
+        LatLng parcelPosition = LatLng(
+            AppStore.to.currentRequest.value!.senderAddress['lat'],
+            AppStore.to.currentRequest.value!.senderAddress['lng']);
+        addMarker(LatLng(
+            currentPosition!.value.latitude, currentPosition!.value.longitude));
+        addParcelMarker(parcelPosition);
+        await getCurrentPosition();
+        await drawPolyline();
+        waiting.value = false;
+        return this;
+      }
     }
     return this;
   }
@@ -154,7 +174,7 @@ class PickupController extends GetxController {
     try {
       List<LatLng> polylineCoordinates = [];
       PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
-        'AIzaSyCYyiIDdbZMRqbLG0VMfR-go_5sO-JN6Dc',
+        MyKey.ggApiKey,
         PointLatLng(listMarkers[0].position.latitude,
             listMarkers[0].position.longitude),
         PointLatLng(listMarkers[1].position.latitude,

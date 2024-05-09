@@ -8,10 +8,18 @@ class CategoryMiddleware extends GetMiddleware {
   RouteSettings? redirect(String? route) {
     if (AppStore.to.onDelivery.value) {
       if (AppStore.to.currentRequest.value?.statusRequest == 'on delivery') {
-        return RouteSettings(name: RouteName.deliveryRoute);
+        if (AppStore.to.requestType.value == "express") {
+          return RouteSettings(name: RouteName.deliveryRoute);
+        }
+        if (AppStore.to.requestType.value == "requestMulti") {
+          return RouteSettings(name: RouteName.deliveryMultiRoute);
+        }
       }
       if (AppStore.to.currentRequest.value?.statusRequest == 'on taking') {
         return RouteSettings(name: RouteName.pickupRoute);
+      }
+      if (AppStore.to.mode.value == "saving") {
+        return RouteSettings(name: RouteName.deliverySavingRoute);
       }
     }
     return null;

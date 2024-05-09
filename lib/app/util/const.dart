@@ -17,19 +17,23 @@ SizedBox spaceWidth(context, {double width = 0.04}) => SizedBox(
     );
 
 TextStyle smallTextStyle(context,
-        {double size = 16, Color color = Colors.black}) =>
-    GoogleFonts.roboto(
-        fontSize: size, color: color, fontWeight: FontWeight.normal);
+        {double size = 16,
+        Color color = Colors.black,
+        FontWeight fontWeight = FontWeight.normal}) =>
+    GoogleFonts.roboto(fontSize: size, color: color, fontWeight: fontWeight);
 
 TextStyle mediumTextStyle(context,
-        {double size = 21, Color color = Colors.black}) =>
-    GoogleFonts.roboto(
-        fontSize: size, color: color, fontWeight: FontWeight.w400);
+        {double size = 21,
+        Color color = Colors.black,
+        FontWeight fontWeight = FontWeight.w400}) =>
+    GoogleFonts.roboto(fontSize: size, color: color, fontWeight: fontWeight);
 
 TextStyle largeTextStyle(context,
-        {double size = 30, Color color = Colors.black}) =>
-    GoogleFonts.roboto(
-        fontSize: size, color: color, fontWeight: FontWeight.bold);
+        {double size = 30,
+        Color color = Colors.black,
+        FontWeight fontWeight = FontWeight.bold}) =>
+    GoogleFonts.roboto(fontSize: size, color: color, fontWeight: fontWeight);
+
 Color green = const Color(0xff9BFE03);
 Color grey = const Color(0xff898989);
 Color lightGrey = const Color(0xff3B3F34);

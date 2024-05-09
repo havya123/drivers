@@ -219,8 +219,6 @@ class PickupScreen extends GetView<PickupController> {
                                           }
 
                                           await controller.pickUpSuccess();
-                                          // await controller
-                                          //     .openGoogleMapsDirections();
                                         },
                                         borderRadius: 5,
                                         textButton: PickupController
@@ -309,7 +307,7 @@ class PickupScreen extends GetView<PickupController> {
                                         Text(
                                           "Error",
                                           style: smallTextStyle(context,
-                                              color: Colors.white),
+                                              color: Colors.white, size: 14),
                                         )
                                       ],
                                     ),

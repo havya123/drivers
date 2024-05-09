@@ -1,6 +1,9 @@
+import 'dart:convert';
+import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:drivers/app/route/route_name.dart';
 import 'package:drivers/app/store/app_store.dart';
+import 'package:drivers/app/store/services.dart';
 import 'package:drivers/app/util/key.dart';
 import 'package:drivers/extension/snackbar.dart';
 import 'package:drivers/firebase_service/notification_service.dart';
@@ -18,11 +21,10 @@ import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:math' show cos, sqrt, asin;
-import 'package:url_launcher/url_launcher.dart' as urlLaunch;
 
-class DeliveryController extends GetxController {
+import 'package:url_launcher/url_launcher.dart' as urlLauncher;
+
+class DeliveryMultiController extends GetxController {
   RxList<Marker> listMarkers = <Marker>[].obs;
   Rx<LatLng>? currentPosition;
   RxDouble zoom = 15.0.obs;
@@ -36,25 +38,45 @@ class DeliveryController extends GetxController {
   static RxBool waitingConfirm = false.obs;
   late Rx<LatLngBounds> bounds;
   Rx<XFile?> iamgeConfirm = Rx<XFile?>(null);
-  Rx<Parcel?> parcelDetail = Rx<Parcel?>(null);
+  // Rx<Parcel?> parcelDetail = Rx<Parcel?>(null);
   RxBool loading = false.obs;
+  RxList<Map<String, dynamic>> listDestination = <Map<String, dynamic>>[].obs;
+  RxString destinationSelect = "".obs;
+  RxString receiverPhone = "".obs;
+  RxList<String> listParcelId = <String>[].obs;
+  RxString currentParcelID = "".obs;
+  Rx<LatLng> currentDestinationPos = const LatLng(0, 0).obs;
+  RxList<Parcel> listParcel = <Parcel>[].obs;
 
   @override
-  Future<DeliveryController> onInit() async {
-    super.onInit();
+  Future<DeliveryMultiController> onInit() async {
     if (currentPosition == null) {
-      parcelDetail.value = await ParcelRepo()
-          .getParcelInfor(AppStore.to.currentRequest.value!.parcelId);
+      // parcelDetail.value = await ParcelRepo()
+      //     .getParcelInfor(AppStore.to.currentRequest.value!.parcelId);
+
       await initPosition();
       await createUserMarker();
+      await getCurrentPosition();
+
+      listDestination.value = AppStore.to.currentRequest.value.receiverAddress;
+      receiverPhone.value =
+          AppStore.to.currentRequest.value.receiverAddress[0]['receiverPhone'];
+      destinationSelect.value = AppStore
+          .to.currentRequest.value.receiverAddress[0]['receiverAddress'];
+      currentDestinationPos.value = LatLng(
+          AppStore.to.currentRequest.value.receiverAddress[0]['lat'],
+          AppStore.to.currentRequest.value.receiverAddress[0]['lng']);
+
+      listParcelId.value = AppStore.to.currentRequest.value.parcelId;
+      currentParcelID.value = listParcelId[0];
       LatLng destinationPosition = LatLng(
-          AppStore.to.currentRequest.value!.receiverAddress['lat'],
-          AppStore.to.currentRequest.value!.receiverAddress['lng']);
+          AppStore.to.currentRequest.value.receiverAddress[0]['lat'],
+          AppStore.to.currentRequest.value.receiverAddress[0]['lng']);
 
       addDestinationMarker(destinationPosition);
-      await getCurrentPosition();
       addMarker(LatLng(
           currentPosition!.value.latitude, currentPosition!.value.longitude));
+      await getAllParcel();
       await drawPolyline();
       _calculateBounds();
       waiting.value = false;
@@ -192,9 +214,9 @@ class DeliveryController extends GetxController {
     double distance = calculateDistance(
         currentPosition!.value.latitude,
         currentPosition!.value.longitude,
-        AppStore.to.currentRequest.value!.receiverAddress['lat'],
-        AppStore.to.currentRequest.value!.receiverAddress['lng']);
-    if (distance > 0.2) {
+        currentDestinationPos.value.latitude,
+        currentDestinationPos.value.longitude);
+    if (distance > 0.05) {
       isClose.value = false;
     } else {
       isClose.value = true;
@@ -228,14 +250,12 @@ class DeliveryController extends GetxController {
   Future<void> openGoogleMapsDirections() async {
     LatLng userPosition = LatLng(
         currentPosition!.value.latitude, currentPosition!.value.longitude);
-    LatLng destination = LatLng(
-        AppStore.to.currentRequest.value!.receiverAddress['lat'],
-        AppStore.to.currentRequest.value!.receiverAddress['lng']);
+    LatLng destination = listMarkers[1].position;
 
     String url =
         'https://www.google.com/maps/dir/?api=1&origin=${userPosition.latitude},${userPosition.longitude}&destination=${destination.latitude},${destination.longitude}';
 
-    await urlLaunch.launchUrl(Uri.parse(url));
+    await urlLauncher.launchUrl(Uri.parse(url));
   }
 
   void _calculateBounds() {
@@ -297,21 +317,75 @@ class DeliveryController extends GetxController {
 
   Future<void> deliveryDone() async {
     MyDialogs.showProgress();
-    await ParcelRepo()
-        .uploadImage(parcelDetail.value!.parcelId, iamgeConfirm.value!);
-    await RequestRepo()
-        .updateStatus(AppStore.to.currentRequest.value!.requestId, "success");
-    DeviceTokenModel deviceTokenModel = await DeviceTokenRepo()
-        .getDeviceToken(AppStore.to.currentRequest.value!.userId);
-    await NotificationService().sendNotification(
-        deviceTokenModel.deviceToken, "Complete delivery", "Complete delivery");
-    AppStore.to.currentRequest.value = null;
-    var prefs = await SharedPreferences.getInstance();
-    prefs.remove(MyKey.currentRequest);
-    AppStore.to.onDelivery.value = false;
-    prefs.remove(MyKey.onDelivery);
-    loading.value = false;
-    Future.delayed(const Duration(seconds: 1),
-        () => Get.offNamed(RouteName.categoryRoute));
+    // loading.value = true;
+    await ParcelRepo().uploadImage(currentParcelID.value, iamgeConfirm.value!);
+    if (listDestination.isNotEmpty) {
+      AppStore.to.listDone.add(destinationSelect.value);
+      AppServices.to
+          .setString(MyKey.listDone, jsonEncode(AppStore.to.listDone));
+
+      if (containsAll()) {
+        await RequestRepo().updateStatusMulti(
+            AppStore.to.currentRequest.value!.requestId, "success");
+        DeviceTokenModel deviceTokenModel = await DeviceTokenRepo()
+            .getDeviceToken(AppStore.to.currentRequest.value!.userId);
+        await NotificationService().sendNotification(
+            deviceTokenModel.deviceToken,
+            "Complete delivery",
+            "Complete delivery");
+        AppStore.to.currentRequest.value = null;
+        AppServices.to.removeString(MyKey.currentRequest);
+        AppServices.to.removeString(MyKey.onDelivery);
+        AppStore.to.onDelivery.value = false;
+        AppStore.to.listDone.clear();
+        AppServices.to.removeString(MyKey.listDone);
+
+        loading.value = false;
+        MyDialogs.dialogInfo(
+            context: Get.context!,
+            msg: "Congratulation!!!",
+            body: const Text("You have deliveried all parcels successfully"));
+        Future.delayed(const Duration(seconds: 1),
+            () => Get.offNamed(RouteName.categoryRoute));
+        return;
+      }
+      Get.back();
+      Get.back();
+      return;
+    }
+  }
+
+  void onSelectDestination(String newDestination, int index) async {
+    destinationSelect.value = newDestination;
+    receiverPhone.value = AppStore
+        .to.currentRequest.value.receiverAddress[index]['receiverPhone'];
+    currentParcelID.value = listParcelId[index];
+    currentDestinationPos.value = LatLng(
+        AppStore.to.currentRequest.value.receiverAddress[index]['lat'],
+        AppStore.to.currentRequest.value.receiverAddress[index]['lng']);
+    polylines.clear();
+    addDestinationMarker(currentDestinationPos.value);
+    await drawPolyline();
+    _calculateBounds();
+  }
+
+  Future<void> getAllParcel() async {
+    for (var parcelId in listParcelId) {
+      Parcel parcel = await ParcelRepo().getParcelInfor(parcelId);
+      listParcel.add(parcel);
+    }
+  }
+
+  Future<Parcel> getParcelImageConfirm(int index) async {
+    return await ParcelRepo().getParcelInfor(listParcelId[index]);
+  }
+
+  bool containsAll() {
+    for (var destination in listDestination) {
+      if (!AppStore.to.listDone.contains(destination['receiverAddress'])) {
+        return false;
+      }
+    }
+    return true;
   }
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:drivers/app/route/route_name.dart';
 import 'package:drivers/app/store/app_store.dart';
 import 'package:drivers/app/store/services.dart';
 import 'package:drivers/app/util/key.dart';
@@ -8,6 +10,7 @@ import 'package:drivers/firebase_service/notification_service.dart';
 import 'package:drivers/model/device_token.dart';
 import 'package:drivers/model/place.dart';
 import 'package:drivers/model/request.dart';
+import 'package:drivers/model/request_multi.dart';
 import 'package:drivers/repository/device_token_repo.dart';
 import 'package:drivers/repository/request_repo.dart';
 import 'package:drivers/repository/user_repo.dart';
@@ -28,24 +31,45 @@ class HomeController extends GetxController {
   final RxList<Marker> listMarkers = <Marker>[].obs;
   Rx<Place?> myPlace = Rx<Place?>(null);
   RxBool waiting = true.obs;
-  Rx<Request?> newRequest = Rx<Request?>(null);
+  Rx<dynamic> newRequest = Rx<dynamic>(dynamic);
+  RxList<Request> listRequestSaving = <Request>[].obs;
 
   late Uint8List iconMarker;
   RxString newRequestComing = "".obs;
+  RxString requestType = "".obs;
+
   RxInt second = 30.obs;
   RxBool timeup = false.obs;
   Timer? _timer;
   RxBool available = true.obs;
+
+  void changeToDefaultMode() {
+    AppStore.to.mode.value = "express";
+    AppServices.to.setString(MyKey.modeSaved, AppStore.to.mode.value);
+  }
+
+  void changeToSavingMode() {
+    AppStore.to.mode.value = "saving";
+    AppServices.to.setString(MyKey.modeSaved, AppStore.to.mode.value);
+  }
 
   void startCountDown() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (second.value == 0) {
         timeup.value = true;
-        DeviceTokenModel deviceTokenModel =
-            await DeviceTokenRepo().getDeviceToken(newRequest.value!.userId);
-        await NotificationService()
-            .declineRequest(deviceTokenModel.deviceToken);
+        if (newRequest is Request) {
+          DeviceTokenModel deviceTokenModel =
+              await DeviceTokenRepo().getDeviceToken(newRequest.value!.userId);
+          await NotificationService()
+              .declineRequest(deviceTokenModel.deviceToken);
+        }
+        if (newRequest is RequestMulti) {
+          DeviceTokenModel deviceTokenModel =
+              await DeviceTokenRepo().getDeviceToken(newRequest.value!.userId);
+          await NotificationService()
+              .declineRequest(deviceTokenModel.deviceToken);
+        }
         newRequest.value = null;
         _timer?.cancel();
         return;
@@ -75,6 +99,7 @@ class HomeController extends GetxController {
       waiting.value = false;
       return this;
     }
+    listRequestSaving = AppStore.to.listRequestSaving;
 
     await initPosition();
     await createUserMarker();
@@ -152,7 +177,8 @@ class HomeController extends GetxController {
 
         moveCamera(currentPosition!.value);
       });
-
+      addMarker(LatLng(
+          currentPosition!.value.latitude, currentPosition!.value.longitude));
       moveCamera(currentPosition!.value);
     } catch (e) {
       return MyDialogs.error(
@@ -204,7 +230,7 @@ class HomeController extends GetxController {
 
   Future<void> getPlaceByAttitude(String keyword) async {
     final String url =
-        "https://maps.googleapis.com/maps/api/geocode/json?latlng=$keyword&key=AIzaSyCYyiIDdbZMRqbLG0VMfR-go_5sO-JN6Dc";
+        "https://maps.googleapis.com/maps/api/geocode/json?latlng=$keyword&key=MyKey.ggApiKey";
 
     final uri = Uri.parse(url);
     var response = await http.get(uri);
@@ -221,6 +247,16 @@ class HomeController extends GetxController {
         lng: dataLocation['geometry']['location']['lng']);
   }
 
+  Future<RequestMulti?> getRequestMultiInfor() async {
+    RequestMulti? requestMulti =
+        await RequestRepo().getRequestMulti(newRequestComing.value);
+    if (requestMulti != null) {
+      startCountDown();
+      return requestMulti;
+    }
+    return null;
+  }
+
   Future<Request?> getRequestInformation() async {
     Request? request = await RequestRepo().getRequest(newRequestComing.value);
     if (request != null) {
@@ -228,6 +264,75 @@ class HomeController extends GetxController {
       return request;
     }
     return null;
+  }
+
+  Future<void> acceptRequestMulti() async {
+    try {
+      if (second.value != 0) {
+        await RequestRepo().updateDriverRequestMulti(
+            newRequestComing.value, AppStore.to.uid.value);
+        await RequestRepo()
+            .updateStatusMulti(newRequestComing.value, 'on taking');
+        available.value = false;
+
+        DeviceTokenModel receiverToken =
+            await DeviceTokenRepo().getDeviceToken(newRequest.value.userId);
+
+        await NotificationService().sendNotification(
+            receiverToken.deviceToken, "Request Accept", AppStore.to.uid.value);
+
+        Map<String, dynamic> currentRequest = {
+          'requestId': newRequest.value.requestId,
+          'requestType': 'requestMulti'
+        };
+
+        AppStore.to.currentRequest.value = newRequest.value;
+        AppServices.to
+            .setString(MyKey.currentRequest, jsonEncode(currentRequest));
+        AppStore.to.onDelivery.value = true;
+        AppServices.to.setString(
+            MyKey.onDelivery, jsonEncode(AppStore.to.onDelivery.value));
+      }
+    } on FirebaseException catch (e) {
+      if (e.code == 'not-found') {
+        newRequestComing.value == "";
+
+        requestType.value == "";
+        MyDialogs.error(msg: "It seems like customer has canceled the request");
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> acceptRequestSaving() async {
+    MyDialogs.showProgress();
+    if (listRequestSaving.length <= 5) {
+      if (second.value != 0) {
+        await RequestRepo()
+            .updateDriverRequest(newRequestComing.value, AppStore.to.uid.value);
+        await RequestRepo().updateStatus(newRequestComing.value, 'on taking');
+        Request? request =
+            await RequestRepo().getRequest(newRequestComing.value);
+
+        if (request != null) {
+          listRequestSaving.add(request);
+          DeviceTokenModel receiverToken =
+              await DeviceTokenRepo().getDeviceToken(request.userId);
+
+          await NotificationService().sendNotification(
+              receiverToken.deviceToken,
+              "Request Accept",
+              AppStore.to.uid.value);
+        }
+        newRequestComing.value = "";
+        AppServices.to.setString(
+            MyKey.listRequestSaving, jsonEncode(listRequestSaving.toList()));
+        Get.back();
+      }
+    } else {
+      MyDialogs.error(msg: "You can only receive maximum 5 orders.");
+      return;
+    }
   }
 
   Future<void> acceptRequest() async {
@@ -240,24 +345,51 @@ class HomeController extends GetxController {
 
         available.value = false;
 
-        Request newRequest =
-            await RequestRepo().getRequest(newRequestComing.value) as Request;
+        // Request newRequest =
+        //     await RequestRepo().getRequest(newRequestComing.value) as Request;
         DeviceTokenModel receiverToken =
-            await DeviceTokenRepo().getDeviceToken(newRequest.userId);
+            await DeviceTokenRepo().getDeviceToken(newRequest.value.userId);
 
         await NotificationService().sendNotification(
             receiverToken.deviceToken, "Request Accept", AppStore.to.uid.value);
 
-        AppStore.to.currentRequest.value = newRequest;
-        await AppServices.to
-            .setString(MyKey.currentRequest, newRequest.requestId);
+        AppStore.to.currentRequest.value = newRequest.value;
+        Map<String, dynamic> currentRequest = {
+          'requestId': newRequest.value.requestId,
+          'requestType': 'express'
+        };
+        AppServices.to
+            .setString(MyKey.currentRequest, jsonEncode(currentRequest));
         AppStore.to.onDelivery.value = true;
         await AppServices.to.setString(
             MyKey.onDelivery, jsonEncode(AppStore.to.onDelivery.value));
       }
-    } catch (e) {
-      print(e);
+    } on FirebaseException catch (e) {
+      if (e.code == 'not-found') {
+        newRequestComing.value == "";
+
+        requestType.value == "";
+        MyDialogs.error(msg: "It seems like customer has canceled the request");
+      }
       rethrow;
     }
   }
+
+  Future<void> startDelivery() async {
+    try {
+      for (var request in listRequestSaving) {
+        DeviceTokenModel receiverToken =
+            await DeviceTokenRepo().getDeviceToken(request.userId);
+
+        await NotificationService().sendNotification(
+            receiverToken.deviceToken,
+            "Driver is coming. Please prepare your order",
+            AppStore.to.uid.value);
+      }
+
+      Get.toNamed(RouteName.deliverySavingRoute);
+    } catch (e) {}
+  }
+
+  void logout() {}
 }

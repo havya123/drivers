@@ -5,4 +5,7 @@ class RouteName {
   static String phoneRegisterRoute = "/phoneRegisterRoute";
   static String pickupRoute = "/pickupRoute";
   static String deliveryRoute = "/deliveryRoute";
+  static String deliveryMultiRoute = "/deliveryMultiRoute";
+  static String detailRoute = "/detailRoute";
+  static String deliverySavingRoute = "/deliverySavingRoute";
 }

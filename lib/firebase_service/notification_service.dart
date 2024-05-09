@@ -4,6 +4,7 @@ import 'package:drivers/app/route/route_name.dart';
 import 'package:drivers/app/store/app_store.dart';
 import 'package:drivers/app/store/services.dart';
 import 'package:drivers/app/util/key.dart';
+import 'package:drivers/controller/delivery_saving_controller.dart';
 import 'package:drivers/controller/home_controller.dart';
 import 'package:drivers/controller/pickup_controller.dart';
 import 'package:drivers/repository/device_token_repo.dart';
@@ -33,21 +34,49 @@ class NotificationService {
         alert: true, badge: true, sound: true);
 
     FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-      if (AppStore.to.currentRequest.value == null) {
+      if (AppStore.to.currentRequest.value == null &&
+          AppStore.to.mode.value == "express") {
         if (message.notification != null) {
           if (HomeController.to.available.value == false) {
             return;
           }
           if (message.notification?.body != null) {
-            HomeController.to.newRequestComing.value =
-                message.notification?.body as String;
+            Map<String, dynamic> response =
+                jsonDecode(message.notification?.body as String);
+            if (response['requestType'] == AppStore.to.mode.value ||
+                response['requestType'] == "requestMulti") {
+              HomeController.to.newRequestComing.value = response['requestId'];
+              HomeController.to.requestType.value = response['requestType'];
+              AppStore.to.requestType.value = response['requestType'];
+            } else {
+              await declineRequest(response['deviceToken']);
+            }
+
             return;
           }
         }
       } else {
         if (message.notification?.body == 'Confirm success') {
-          PickupController.waitingConfirm.value = false;
-          Get.toNamed(RouteName.deliveryRoute);
+          if (AppStore.to.requestType.value == 'express') {
+            PickupController.waitingConfirm.value = false;
+            Get.toNamed(RouteName.deliveryRoute);
+            return;
+          }
+          if (AppStore.to.requestType.value == 'requestMulti') {
+            PickupController.waitingConfirm.value = false;
+            Get.toNamed(RouteName.deliveryMultiRoute);
+          }
+        }
+        if (message.notification?.body == "Confirm success saving") {
+          var controller = Get.find<DeliverySavingController>();
+          if (controller.waitingConfirm.value) {
+            controller.listDoneSaving.add(controller.nameLocation.value);
+            controller.index++;
+            controller.changeLocation();
+            AppServices.to.setString(
+                MyKey.listDoneSaving, jsonEncode(controller.listDoneSaving));
+            controller.waitingConfirm.value = false;
+          }
           return;
         }
       }
@@ -57,29 +86,28 @@ class NotificationService {
   static String firebaseMessagingScope =
       "https://www.googleapis.com/auth/firebase.messaging";
 
-  // Future<String> getAccessToken() async {
-  //   final accountCredentials = ServiceAccountCredentials.fromJson({
-  //     "type": "service_account",
-  //     "project_id": "delivery-5f21b",
-  //     "private_key_id": "32efc4dc73072123c37fee21f40d48a5b80b2d25",
-  //     "private_key":
-  //         "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQClKaBvaqXp1H6U\nNveca1Iy/5sIIUPzzQRnBHowjjyBUDseU7at2OkWd008DbJX9hVuiMT2rS5234fQ\nHzV01H3DbFG2QWQfSjfRQDrFT3SnkxZktqZlBMf+h/SpxxgGQ+te6VPJ/z1mAizu\nuOJHjJFGIu+fBBh9eTe6H9eTJ8qoVu3MfYEKxLMs24XcaDYj40FTRY0MWJ+tsxNt\njHGqQikL7B+WXH5WHg1r0FC8nPN7StXwvZDLAcxrd1j0YKNxZnaFd8C751hTgro0\nqSt/vyCtQEY3kv/BVWbu8UkTFyrcVnC5i75IrpAyiG/GZvKqUNMuMO/2F6GNNqaJ\nMLEONm35AgMBAAECggEACozysTtcVugan+g1ABqA+T4HzsilOR1HIzePgKuNZOtV\no3XQjSF2nldHqUbsth7Dtrho8KMWfUSBPgPIW+q5D/NK8vwRY8hPcYALYRBW0N+e\nBhf+4CQijHlt4SyVNc0/62O3VQeHig0ohqVr2ws5OoQ/z2YpFFbafvrKwB1CHme4\n2e+qxcBntF8pD06yZb8A89yPVP9sV9Db3JNpIFtNr7VE4Agg5sZOA4xjJT2uO8An\nMm9QzpRehuCKyWGTJLFnrFuARYRM1RMmeTtABbCPn7hlbZcy5xYh+KhUqOkuCRPH\nLDkywavNnJrDm7gntg0NqUpvZU/HV+qLgF2oIroAwwKBgQDcrzZ1JKdVwIEaoxSo\n7FpdwXfMoAIQvnoc7OavEdMQUsAHdIjRhkZn5KtVLuPWOW6+newmBaMnZxctf50Y\nuNo7QP9uhAyjiw9RYxiIsvAimLl9A9M3sfVVuRvcw/DOy1aZ9/9GY+3WaQLhESp/\nXnLtcBkjiPtFMwJDQekAmIK5PwKBgQC/l9l0cB3y0uCs7jBwiqRk0OidYZ8XOIcZ\nsp6/CE9rNmhxc8v5b/qTWFdL3Wkp44OM9/sDnn+waAN9EGV2dtcd1rpDLKjhCCtI\nBPpBVRLo58t6Sk4qzFLDiIy6aYPMaW6gHpBp5gCzZxwvUQ7eO7URSkVfqGJOPuC9\nuSEyKe4SxwKBgQCOfQbxbgApSwlQ9JkjVLAoNwGt+mY6/3GC+accxKp9sKBSb/jj\nKAqPjELf1k2/hQevRfIyvpMQnuyFMQ9y5e/qMFZ8ugAbHG+AgjZWFQsdm3SwdmbL\nYDji54lI6q6yJvI8qbaGcYEgXl9AiL/iy03zZtykaA6tKHk+ifDytIY7KwKBgHRc\nikJwkY/XyYLdyuefHIbqZkynbJMSzuKpnEZTisCHs9krxfdBrkLtBV/bIjLBrjTg\nq0AgdFa0ZWIAok7XkIDb2BZSOmMprfe4pjEltS1lEiy8kkrl+2IsPaQ9z0FHy1tO\nFNFsUoKjHfgS19/bDXZp0EZvovz4rVAs7t9jnecjAoGBAKp74satZOHIm56tJ/Uj\ng5Xfwuh33o8BAbhdc7GDb48eCxeXGMe6OGydqNYd5asM+O2XoOFjF553W0y/2MCQ\nX2yHmx3iaxSSp9QsbRDx+7vfmorwrFxqKyeD2oQCAy4Jn3Xu7CCn2t1qK+CV0YTm\nSKwkduBm1E53iAJ2Gs4K3RrU\n-----END PRIVATE KEY-----\n",
-  //     "client_email":
-  //         "firebase-adminsdk-oqnhd@delivery-5f21b.iam.gserviceaccount.com",
-  //     "client_id": "106244357033130867318",
-  //     "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  //     "token_uri": "https://oauth2.googleapis.com/token",
-  //     "auth_provider_x509_cert_url":
-  //         "https://www.googleapis.com/oauth2/v1/certs",
-  //     "client_x509_cert_url":
-  //         "https://www.googleapis.com/robot/v1/metadata/x509/firebase-adminsdk-oqnhd%40delivery-5f21b.iam.gserviceaccount.com",
-  //     "universe_domain": "googleapis.com"
-  //   });
-  //   final client = await clientViaServiceAccount(
-  //       accountCredentials, [firebaseMessagingScope]);
-  //   final accessToken = client.credentials.accessToken.data;
-  //   return accessToken;
-  // }
+//  /* Future<String> getAccessToken() async {
+//     final accountCredentials = ServiceAccountCredentials.fromJson({
+//       "type": "service_account",
+//       "project_id": "delivery-5f21b",
+//       "private_key_id": "e33b9e3194ec0ede2f53f81b9225de0d49458fce",
+//       "private_key":
+//           "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDNaASbNoiipIbE\n27+IeeAjZ8VZYrZzGCtoDQQ+PUGcMRCUJlLaNmtoA/nmE+JROQC9yBgNd32axzHU\nnF7S6vmeOD1e6rPhKEI5XfFcmqmccVOMUfh+VIWwWRaSYz/wvb6COuskiEF48QvQ\ndIH1mW6ZsxjtGE3/vZEpOsKUYreAXM3X9DMGkArzOM8kbJzyLyz8v4HlJelbd22B\nhVV+aJRTVYPTJMjYk/gVt64yzYln5F28OaGbtI/rFROFpj8emlEIY1+3e/3RLK81\nooCnL8bxa2kM1B5KuANw6UhlenxxNVWEoJUVXPLEb7eMSp328fVg105kAzC69oFN\nNFfuG11zAgMBAAECggEAR60VdmgIM+D/mjAoXOJSgWhTqEZW7kCv3OY15dYQUAWb\nCGd7H+Q/hJNmn4+uuLMQfCkXo5NfxCPgUpWiTS1rn3d2iumRjW8z9LrAX5UkvI+b\nHOr5sHOkFw5vXvO9Oy+rC9ytcxkM57wNaFdPhjldK8sgVpPVm/k1b1Ku1YLBD8wy\nZdc0qLcyuyv2YqZ5f4IuWe6Vtbf2sLjmDf87/5ecj9A6rCdYTdVcM35cQNpEkyxj\nfVxNLUsKdtg/s7zj+EMGpsfKXDjOmXL6Wc/nt8X/WP/kDk8PhrwfkBh6KX9spj9j\nPo3VfctVcNavezVLwVgkfEJdNO/Ok05EAFFpz2H9UQKBgQDvNPVszTzSTkUjpCWa\ncrNM4ykVqra3Pzl+WlHswCQ7xuvNkMPnZZ803psWAn9FwxTcDEQ0FO++P4mIYTRc\nao/yefQX6vovfXTJ8t+NPTuMiqtGWg7T/JFmxhTvJHvYrmTBcl0oG7AWnZLnalyI\nSDQCbP429OhMJK0ZXcCm/kSfqQKBgQDb05f48hkYlH0VZwk6M1J7F+569Nf9v1Ww\n1hLBeGiL0wc7L6DCw4ZDqLn5+pFYo5/YcfTW+BXPzUx94JzUavQjf3xJWs5GhwPO\nPJc1jYKMvBTJEG5hYPjhX/N6EHj0/V8E3VvW91CyD0lCP1E4i5rEgNoMjMT+gBcm\n3kDEcH71uwKBgCJi3Yj3c+/TepLmDNXH+UhrO0O3F6798rjcKPy8njjNnqYdUlwY\nOqux+F9QmpUftwbu6HsIK3KQ1ad6ObmzQ+AaceFiUPa0tS42sLYwADhy0q45Ufpd\nS1WX0fiSqQ77+tXoJ8YVPNnzauPDYWvh3UAgBOdHi4EuoIeN95zJ3nmJAoGBAK8W\ndloTQkfgpUwxuBjCHfTrF8iZUZvLFM53g5LTe7m6yGysv8fBAiTLs+1WVQQbt0on\nYdMC4CSWKVGtYFyUH4ZSmUS37cog6bgPbIR8BLphZ9DJpJEtMq4XxY64pg7D7DWs\nteSfMYfRQxFf6yo1j3zqAEK0sIbgsRAFP+L2kzjXAoGBAN+gbSErledu+ZGdnZ4T\nauWad4PnWQdUzXI81YUcN7ZSAPpNMcH9haJIlm3RqSjFtZ2yD3EiMX2FiGGq8+YX\n79O9LEM/ClslcD5Vt0sAsPWK5bh/e98mcvXBDoJywqbhTLSYhNnLSNmQe4YukCEj\nrnf4Y5A3BUhNLk7FJoYGiJ5w\n-----END PRIVATE KEY-----\n",
+//       "client_email": "delivery-5f21b@appspot.gserviceaccount.com",
+//       "client_id": "106494490895015421787",
+//       "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+//       "token_uri": "https://oauth2.googleapis.com/token",
+//       "auth_provider_x509_cert_url":
+//           "https://www.googleapis.com/oauth2/v1/certs",
+//       "client_x509_cert_url":
+//           "https://www.googleapis.com/robot/v1/metadata/x509/delivery-5f21b%40appspot.gserviceaccount.com",
+//       "universe_domain": "googleapis.com"
+//     });
+//     final client = await clientViaServiceAccount(
+//         accountCredentials, [firebaseMessagingScope]);
+//     final accessToken = client.credentials.accessToken.data;
+//     return accessToken;
+//   }*/
 
   Future<void> sendNotification(
       String receiverDeviceToken, dynamic title, dynamic body) async {
@@ -98,7 +126,7 @@ class NotificationService {
         'token': receiverDeviceToken,
         'notification': {
           'title': title,
-          'body': body,
+          'body': body is String ? body : jsonEncode(body),
         },
       },
     };

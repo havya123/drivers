@@ -44,6 +44,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
+      debugShowCheckedModeBanner: false,
       initialBinding: LoginBinding(),
       initialRoute: RouteName.loginRoute,
       getPages: RouteCustom.getPage,
